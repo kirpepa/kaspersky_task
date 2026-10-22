@@ -1,0 +1,11 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+bin/
+coverage.out
+coverage.html
+certs/
+*.key
+*.crt
+*.pem

@@ -1,0 +1,15 @@
+.git
+.DS_Store
+**/.DS_Store
+.env
+.env.*
+bin/
+coverage.out
+coverage.html
+certs/
+*.key
+*.crt
+*.pem
+**/*.key
+**/*.crt
+**/*.pem

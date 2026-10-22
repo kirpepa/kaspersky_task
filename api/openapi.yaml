@@ -1,0 +1,290 @@
+openapi: 3.0.0
+info:
+  title: Information Exchange Service
+  description: >-
+    API для обмена информацией об угрозах. Для трёх операций действует общий
+    запас запросов на IP-адрес непосредственного клиента (RemoteAddr);
+    заголовки прокси не учитываются. Лимит и реестр IP-адресов хранятся в памяти
+    отдельного процесса сервера. При исчерпании запаса запросов возвращается 429.
+    Новый IP-адрес также может получить 429, если реестр IP-адресов заполнен.
+  version: 1.0.0
+
+paths:
+  /info/{md5}:
+    get:
+      summary: Получить информацию об угрозе по MD5
+      description: Возвращает полную информацию об угрозе для указанного MD5-хеша. Регистр MD5 не учитывается.
+      operationId: getInfoByMd5
+      parameters:
+        - name: md5
+          in: path
+          required: true
+          description: MD5-хеш файла (32 символа, шестнадцатеричные цифры). Регистр не учитывается.
+          schema:
+            type: string
+            pattern: '^[a-fA-F0-9]{32}$'
+            example: "d41d8cd98f00b204e9800998ecf8427e"
+      responses:
+        '200':
+          description: Успешный ответ с информацией об угрозе
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThreatResponse'
+        '404':
+          description: Угроза с указанным MD5 не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          description: Некорректный формат MD5
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      summary: Обновить информацию об угрозе по MD5
+      description: >-
+        Заменяет изменяемые поля существующей записи об угрозе. MD5 не изменяется.
+        Пропущенное поле description становится пустой строкой, а severity — unknown.
+        Если запись отсутствует, возвращается 404.
+        Тело запроса ограничено 64 KiB (65536 байт), включая неизвестные поля.
+      operationId: updateThreat
+      parameters:
+        - name: md5
+          in: path
+          required: true
+          description: MD5-хеш обновляемой записи. Регистр не учитывается.
+          schema:
+            type: string
+            pattern: '^[a-fA-F0-9]{32}$'
+            example: "d41d8cd98f00b204e9800998ecf8427e"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ThreatUpdateRequest'
+      responses:
+        '200':
+          description: Информация успешно обновлена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThreatResponse'
+        '400':
+          description: Некорректные данные запроса или MD5
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Угроза с указанным MD5 не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /info:
+    post:
+      summary: Создать новую запись об угрозе
+      description: >-
+        Добавляет новую информацию об угрозе. MD5 должен быть уникальным без учёта регистра.
+        Тело запроса ограничено 64 KiB (65536 байт), включая неизвестные поля.
+      operationId: createThreat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ThreatCreateRequest'
+      responses:
+        '201':
+          description: Запись успешно создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThreatResponse'
+        '400':
+          description: Некорректные данные запроса (например, невалидный MD5)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Угроза с таким MD5 уже существует
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  responses:
+    RequestTimeout:
+      description: Истекло время ожидания чтения тела запроса.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    PayloadTooLarge:
+      description: Тело запроса превышает 64 KiB (65536 байт), включая неизвестные поля.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    TooManyRequests:
+      description: >-
+        Исчерпан общий для трёх операций запас запросов с IP-адреса клиента
+        либо новый IP-адрес не может быть добавлен в заполненный реестр.
+      headers:
+        Retry-After:
+          description: Число секунд до повторной попытки, целое число не меньше 1.
+          required: true
+          schema:
+            type: string
+            pattern: '^[1-9][0-9]*$'
+            example: "1"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    ThreatCreateRequest:
+      type: object
+      required:
+        - md5
+        - name
+      properties:
+        md5:
+          type: string
+          pattern: '^[a-fA-F0-9]{32}$'
+          description: MD5-хеш файла (32 шестнадцатеричных символа). Хранится и возвращается в нижнем регистре.
+          example: "d41d8cd98f00b204e9800998ecf8427e"
+        name:
+          type: string
+          maxLength: 256
+          pattern: '^[^\u0000]*$'
+          description: Название угрозы. Не более 256 кодовых точек Unicode, без U+0000. Пустая строка допустима.
+          example: "Trojan.Win32.Generic"
+        description:
+          type: string
+          maxLength: 4096
+          pattern: '^[^\u0000]*$'
+          description: Описание угрозы. Не более 4096 кодовых точек Unicode, без U+0000. При отсутствии используется пустая строка.
+          default: ""
+          example: "Вредоносная программа, похищающая учётные данные."
+        severity:
+          type: string
+          description: Уровень опасности угрозы
+          enum:
+            - unknown
+            - low
+            - medium
+            - high
+            - critical
+          default: unknown
+          example: high
+    ThreatUpdateRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          maxLength: 256
+          pattern: '^[^\u0000]*$'
+          description: Название угрозы. Не более 256 кодовых точек Unicode, без U+0000. Пустая строка допустима.
+          example: "Trojan.Win32.Generic"
+        description:
+          type: string
+          maxLength: 4096
+          pattern: '^[^\u0000]*$'
+          description: Описание угрозы. Не более 4096 кодовых точек Unicode, без U+0000. При отсутствии используется пустая строка.
+          default: ""
+          example: "Вредоносная программа, похищающая учётные данные."
+        severity:
+          type: string
+          description: Уровень опасности угрозы
+          enum:
+            - unknown
+            - low
+            - medium
+            - high
+            - critical
+          default: unknown
+          example: high
+
+    ThreatResponse:
+      type: object
+      properties:
+        md5:
+          type: string
+          pattern: '^[a-fA-F0-9]{32}$'
+          description: MD5-хеш в нижнем регистре
+          example: "d41d8cd98f00b204e9800998ecf8427e"
+        name:
+          type: string
+          description: Название угрозы
+          example: "Trojan.Win32.Generic"
+        description:
+          type: string
+          description: Описание угрозы. При отсутствии используется пустая строка.
+          default: ""
+          example: "Вредоносная программа, похищающая учётные данные."
+        severity:
+          type: string
+          description: Уровень опасности угрозы
+          enum:
+            - unknown
+            - low
+            - medium
+            - high
+            - critical
+          default: unknown
+          example: high
+
+    ErrorResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Человекочитаемое описание ошибки
+          example: "Threat not found"
+        details:
+          type: string
+          description: Дополнительная информация
+          example: "No threat with MD5 d41d8cd98f00b204e9800998ecf8427e found"

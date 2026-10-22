@@ -1,0 +1,99 @@
+services:
+  db:
+    image: postgres:17.11-bookworm
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kasper}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kasper}
+      POSTGRES_DB: ${POSTGRES_DB:-kasper}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  migrate:
+    build:
+      context: .
+      target: runtime
+    entrypoint: ["/migrate"]
+    environment:
+      DATABASE_URL: "host=db port=5432 sslmode=disable"
+      PGUSER: ${POSTGRES_USER:-kasper}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-kasper}
+      PGDATABASE: ${POSTGRES_DB:-kasper}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      target: runtime
+    user: "${API_UID:-65532}:${API_GID:-65532}"
+    ports:
+      - "${HTTP_PORT:-8443}:8443"
+    volumes:
+      - type: bind
+        source: ${TLS_CERT_FILE-./certs/server.crt}
+        target: /run/tls/server.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TLS_KEY_FILE-./certs/server.key}
+        target: /run/tls/server.key
+        read_only: true
+        bind:
+          create_host_path: false
+    environment:
+      HTTP_ADDR: ":8443"
+      TLS_CERT_FILE: /run/tls/server.crt
+      TLS_KEY_FILE: /run/tls/server.key
+      RATE_LIMIT_RPS: ${RATE_LIMIT_RPS-10}
+      RATE_LIMIT_BURST: ${RATE_LIMIT_BURST-20}
+      RATE_LIMIT_MAX_CLIENTS: ${RATE_LIMIT_MAX_CLIENTS-10000}
+      RATE_LIMIT_IDLE_TTL: ${RATE_LIMIT_IDLE_TTL-10m}
+      DATABASE_URL: "host=db port=5432 sslmode=disable"
+      PGUSER: ${POSTGRES_USER:-kasper}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-kasper}
+      PGDATABASE: ${POSTGRES_DB:-kasper}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  tests:
+    profiles: [test]
+    build:
+      context: .
+      target: test
+    environment:
+      TEST_DATABASE_URL: "postgres://kasper_test:kasper_test@test-db:5432/kasper_test?sslmode=disable"
+    depends_on:
+      test-db:
+        condition: service_healthy
+
+  test-db:
+    profiles: [test]
+    image: postgres:17.11-bookworm
+    environment:
+      POSTGRES_USER: kasper_test
+      POSTGRES_PASSWORD: kasper_test
+      POSTGRES_DB: kasper_test
+    ports:
+      - "127.0.0.1:${TEST_POSTGRES_PORT:-55432}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U kasper_test -d kasper_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  postgres_data:
